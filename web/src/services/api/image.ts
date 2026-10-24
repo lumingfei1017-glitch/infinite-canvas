@@ -2,6 +2,8 @@ import axios from "axios";
 
 import i18n from "@/i18n";
 import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { requestBailianChat, type BailianChatMessage } from "./bailian";
+import { requestComfyImages, resolveComfyModel } from "./comfyui";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
@@ -95,7 +97,7 @@ type GeminiPayload = {
     promptFeedback?: { blockReason?: string };
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
-type RequestOptions = { signal?: AbortSignal };
+type RequestOptions = { signal?: AbortSignal; stream?: boolean };
 
 const IMAGE_QUALITY_VALUES = ["low", "medium", "high", "xhigh", "max"];
 const DEFAULT_IMAGE_SHORT_SIDE = 1024;
@@ -175,6 +177,17 @@ function resolveRequestSize(size: string) {
     }
     if (value.includes(":")) return resolveSize(value);
     throw new Error(apiText("invalidImageSizeFormat"));
+}
+
+/** Resolve the canvas size setting ("1024x1536" or a bare ratio) into pixels for ComfyUI width/height bindings. */
+function comfyPixelSize(size: string) {
+    const value = size.trim();
+    if (!value || value.toLowerCase() === "auto") return undefined;
+    const dimensions = parseImageDimensions(value);
+    if (dimensions) return dimensions;
+    if (!value.includes(":")) return undefined;
+    const [width, height] = resolveSize(value).split("x");
+    return { width: Number(width), height: Number(height) };
 }
 
 function resolveGeminiImageConfig(config: AiConfig) {
@@ -470,6 +483,16 @@ function consumeResponseStreamText(state: ResponseStreamState, text: string, onD
 }
 
 async function requestStreamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+    if (options?.stream === false) {
+        // 反推提示词这类一次性任务不需要边收边渲染，直接拿完整响应，避免半截内容在节点里闪。
+        const response = await fetch(aiApiUrl(config, "/responses"), { method: "POST", headers: aiHeaders(config, "application/json"), body: JSON.stringify({ ...body, stream: false }), signal: options.signal });
+        if (!response.ok) throw new Error(await readFetchError(response, apiText("requestFailed")));
+        const payload = (await response.json()) as ResponseApiPayload;
+        validateResponsePayload(payload);
+        const result = parseToolResponse(payload);
+        if (result.content) onDelta?.(result.content);
+        return result;
+    }
     const response = await fetch(aiApiUrl(config, "/responses"), {
         method: "POST",
         headers: { ...aiHeaders(config, "application/json"), Accept: "text/event-stream" },
@@ -577,6 +600,15 @@ function toGeminiToolOptions(tools: ResponseFunctionTool[], toolChoice: ToolChoi
 }
 
 async function requestGeminiStreamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
+    if (options?.stream === false) {
+        const response = await fetch(geminiApiUrl(config, "generateContent"), { method: "POST", headers: geminiHeaders(config), body: JSON.stringify(body), signal: options.signal });
+        if (!response.ok) throw new Error(await readFetchError(response, apiText("requestFailed")));
+        const payload = (await response.json()) as GeminiPayload;
+        validateGeminiPayload(payload);
+        const result = parseGeminiToolResponse(payload);
+        if (result.content) onDelta?.(result.content);
+        return result;
+    }
     const response = await fetch(`${geminiApiUrl(config, "streamGenerateContent")}?alt=sse`, {
         method: "POST",
         headers: geminiHeaders(config),
@@ -694,7 +726,13 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const script = resolveModelScript(config, config.model || config.imageModel);
+    const selectedModel = config.model || config.imageModel;
+    const comfy = await resolveComfyModel(config, selectedModel);
+    if (comfy) {
+        const urls = await requestComfyImages(comfy.gatewayUrl, comfy.workflow, withSystemPrompt(requestConfig, prompt), [], comfyPixelSize(config.size), options);
+        return urls.slice(0, n).map((dataUrl) => ({ id: nanoid(), dataUrl }));
+    }
+    const script = resolveModelScript(config, selectedModel);
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(config.size);
@@ -755,7 +793,14 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
-    const script = resolveModelScript(config, config.model || config.imageModel);
+    const selectedModel = config.model || config.imageModel;
+    const comfy = await resolveComfyModel(config, selectedModel);
+    if (comfy) {
+        // References go into the workflow's own LoadImage nodes, so the numbered-label prefix used by OpenAI edits is noise here.
+        const urls = await requestComfyImages(comfy.gatewayUrl, comfy.workflow, withSystemPrompt(requestConfig, prompt), references, comfyPixelSize(config.size), options);
+        return urls.slice(0, n).map((dataUrl) => ({ id: nanoid(), dataUrl }));
+    }
+    const script = resolveModelScript(config, selectedModel);
     if (script) {
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(config.size);
@@ -838,6 +883,8 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
+    // 百炼的密钥只在网关里，文本/视觉调用同样走网关代理，不在浏览器直连。
+    if (requestConfig.apiFormat === "bailian") return requestBailianChat(requestConfig, withSystemMessage(requestConfig, messages) as BailianChatMessage[], onDelta, options);
     try {
         if (requestConfig.apiFormat === "gemini") {
             const answer = (await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages), onDelta, options)).content || apiText("noContent");

@@ -7,3 +7,6 @@ description: Planned follow-up work
 
 - Replace the Claude Code CLI adapter with a Claude Agent SDK adapter and improve the tool queue, following the [Local Agent Integration Plan](/docs/progress/local-agent-integration-plan).
 - Add Skill installation from web search, Skill resource-file management, and controlled local-memory persistence.
+- ComfyUI integration via a thin Python (FastAPI) gateway: server config and workflow storage stay backend-side, canvas model picker selects exported API-format workflows, image generation first (P1), then video workflows (P2), then motion transfer with multi-reference uploads (P3). See `comyui设计参考文档/plans/2026-10-18-comfyui-python网关-实现计划.md`.
+- Video clone (视频复刻) currently assumes wan3.0: the 图N / 视频N numbering written into the prompt, the 1-15s reference clip, and the silent-output-plus-ffmpeg-remux audio path. When another video model is added, re-check its reference numbering, clip limits and whether it can keep the source soundtrack natively.
+- Bailian (DashScope) channel next steps: wanx image generation through the same create-task/poll skeleton, plus video understanding that sends the whole file instead of sampled frames; keep the gateway as the shared provider host for future platforms (Kling, Jimeng, etc.).

@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
 
-export type ApiCallFormat = "openai" | "gemini";
+export type ApiCallFormat = "openai" | "gemini" | "comfyui" | "bailian";
 export type ModelCapability = "image" | "video" | "text" | "audio";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
@@ -13,6 +13,8 @@ export type ChannelModel = {
     name: string;
     capability: ModelCapability;
     script?: string;
+    /** Display label when the model name itself is an id, e.g. ComfyUI workflows keyed by stored id. */
+    displayName?: string;
 };
 
 export type ModelChannel = {
@@ -44,6 +46,10 @@ export type AiConfig = {
     videoGenerateAudio: string;
     videoWatermark: string;
     videoMode: string;
+    // 视频复刻：参考视频的截取区间与「回贴原声」开关，由复刻向导写入节点元数据。
+    videoClipStart?: string;
+    videoClipEnd?: string;
+    videoSourceAudio?: string;
     systemPrompt: string;
     reasoningEffort: ReasoningEffort;
     models: string[];
@@ -78,6 +84,7 @@ const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 export const LOCAL_PROXY_PACKAGE = "@basketikun/canvas-proxy";
 export const DEFAULT_LOCAL_PROXY_URL = "http://127.0.0.1:23210";
+export const DEFAULT_GATEWAY_URL = "http://127.0.0.1:8787";
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
@@ -209,7 +216,10 @@ export function resolveModelScript(config: AiConfig, value: string) {
 
 function isAiConfigReady(config: AiConfig, model: string) {
     const match = findChannelModel(config, model);
-    return Boolean(match && match.channel.baseUrl.trim() && match.channel.apiKey.trim());
+    if (!match) return false;
+    // Gateway-backed channels hold credentials in the Python gateway, so the browser values may be empty.
+    if (match.channel.apiFormat === "comfyui" || match.channel.apiFormat === "bailian") return true;
+    return Boolean(match.channel.baseUrl.trim() && match.channel.apiKey.trim());
 }
 
 export const useConfigStore = create<ConfigStore>()(
@@ -306,7 +316,8 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
         seen.add(name);
         const capability = typeof item === "string" ? guessCapability(name) : item.capability || guessCapability(name);
         const script = typeof item === "string" ? undefined : item.script?.trim() || undefined;
-        result.push({ name, capability, script });
+        const displayName = typeof item === "string" ? undefined : item.displayName?.trim() || undefined;
+        result.push({ name, capability, script, displayName });
     }
     return result;
 }
@@ -409,6 +420,8 @@ export function modelOptionLabel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
     if (!decoded) return value;
     const channel = config.channels.find((item) => item.id === decoded.channelId);
+    const model = channel?.models.find((item) => item.name === decoded.model);
+    if (model?.displayName) return channel && channel.name ? `${model.displayName}（${channel.name}）` : model.displayName;
     return channel ? `${decoded.model}（${channel.name}）` : decoded.model;
 }
 
@@ -473,11 +486,12 @@ function normalizeChannels(config: AiConfig) {
 
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
     if (apiFormat === "gemini") return GEMINI_BASE_URL;
+    if (apiFormat === "comfyui" || apiFormat === "bailian") return DEFAULT_GATEWAY_URL;
     return OPENAI_BASE_URL;
 }
 
 function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
-    return apiFormat === "gemini" ? apiFormat : "openai";
+    return apiFormat === "gemini" || apiFormat === "comfyui" || apiFormat === "bailian" ? apiFormat : "openai";
 }
 
 function uniqueModelOptions(models: string[]) {

@@ -41,6 +41,19 @@ function localPluginsManifest(): Plugin {
 export default defineConfig({
     base: process.env.VITE_BASE || "/",
     plugins: [react(), localPluginsManifest()],
+    server: {
+        // 开发时把网关请求转发到本机 backend（默认 8787，可用 VITE_COMFY_GATEWAY 覆盖）。
+        proxy: {
+            "/api/comfy": {
+                target: process.env.VITE_COMFY_GATEWAY || "http://127.0.0.1:8787",
+                changeOrigin: true,
+            },
+            "/api/bailian": {
+                target: process.env.VITE_COMFY_GATEWAY || "http://127.0.0.1:8787",
+                changeOrigin: true,
+            },
+        },
+    },
     resolve: {
         alias: {
             "@": resolve(webDir, "src"),

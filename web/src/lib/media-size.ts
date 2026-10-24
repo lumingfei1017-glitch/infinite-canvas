@@ -43,7 +43,7 @@ export const videoRatioOptions = [
     { value: "auto", width: 0, height: 0 },
 ] as const;
 
-export const VIDEO_SECONDS_MIN = 4;
+export const VIDEO_SECONDS_MIN = 2;
 export const VIDEO_SECONDS_MAX = 30;
 
 export function normalizeMediaScale(value: string | undefined) {

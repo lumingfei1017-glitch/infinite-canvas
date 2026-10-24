@@ -33,7 +33,7 @@ export async function captureVideoFrame(source: string, position: VideoFramePosi
     }
 }
 
-function waitForVideo(video: HTMLVideoElement, eventName: "loadedmetadata" | "loadeddata" | "seeked") {
+export function waitForVideo(video: HTMLVideoElement, eventName: "loadedmetadata" | "loadeddata" | "seeked") {
     return new Promise<void>((resolve, reject) => {
         const finish = () => {
             video.removeEventListener(eventName, finish);

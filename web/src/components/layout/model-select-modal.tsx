@@ -61,6 +61,11 @@ export function ModelSelectModal({ open, channel, selectedNames, onConfirm, onCl
 
     const fetchModels = async () => {
         if (!channel) return;
+        // Bailian keeps its key in the gateway and has no /models proxy yet, so models are typed in manually.
+        if (channel.apiFormat === "bailian") {
+            message.info(t("bailian.modelFetchHint"));
+            return;
+        }
         if (!channel.baseUrl.trim() || !channel.apiKey.trim()) {
             message.error(t("config.modelSelect.missingConfig"));
             return;

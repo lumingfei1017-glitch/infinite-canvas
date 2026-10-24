@@ -9,3 +9,17 @@ services:
     # environment:
     #   ANALYTICS_GA4_ID: G-XXXXXXXXXX                    # Google Analytics 4 衡量 ID
     #   ANALYTICS_BAIDU_ID: xxxxxxxxxxxxxxxxxxxxxxxxxxxx   # 百度统计站点 ID
+  comfy-gateway:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: infinite-canvas-comfy-gateway:latest
+    container_name: infinite-canvas-comfy-gateway
+    volumes:
+      - ./backend/data:/app/backend/data
+    restart: unless-stopped
+    # 网关只监听容器网络，由 app 容器的 nginx 以 /api/comfy 与 /api/bailian 反代，浏览器不直连它。
+    # environment:
+    #   COMFY_GATEWAY_PORT: 8787   # 默认 8787
+    #   BAILIAN_API_KEY: sk-xxx    # 可选：渠道未保存 Key 时网关回退用它（也支持 DASHSCOPE_API_KEY）
+    #   BAILIAN_BASE_URL: https://dashscope.aliyuncs.com   # 可选：默认 DashScope 域名

@@ -10,8 +10,16 @@ data/
 .idea
 web/dist
 
+backend/data/
+backend/.venv/
+__pycache__/
+
 **/dist
 web/public/plugins
 plugins/canvas/*/dist
 plugins/canvas/*/node_modules
 web/public/plugins
+
+aliyun后端设计参考文档
+comyui设计参考文档
+workflows

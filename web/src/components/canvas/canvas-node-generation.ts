@@ -5,6 +5,7 @@ import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 import { getGenerationResourceNodes, getGroupResourceNodes } from "@/lib/canvas/canvas-resource-references";
+import { extractVideoFramesForAnalysis } from "@/lib/vision-input";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 
 export type NodeGenerationContext = {
@@ -156,17 +157,37 @@ function readNodeGenerationResource(node: CanvasNodeData): NodeGenerationResourc
     return text ? [{ nodeId: node.id, type: "text", title: node.title, text }] : [];
 }
 
-export function buildNodeResponseMessages(context: NodeGenerationContext): AiTextMessage[] {
-    if (!context.referenceImages.length) {
+type VisionContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+
+/** 视觉消息体：参考图直接带上；参考视频先抽帧并标注时间点，模型才能写出对得上的分镜时间轴。 */
+export async function buildNodeResponseMessages(context: NodeGenerationContext): Promise<AiTextMessage[]> {
+    const images = context.referenceImages.filter((image) => image.dataUrl);
+    const videos = await Promise.all(
+        context.referenceVideos.map(async (video, index) => ({ label: generationLabel("video", index), ...(await extractVideoFramesForAnalysis(video)) })),
+    );
+    if (!images.length && !videos.length) {
         return [{ role: "user", content: context.prompt }];
     }
 
-    return [
-        {
-            role: "user",
-            content: [{ type: "text" as const, text: context.prompt }, ...context.referenceImages.map((image) => ({ type: "image_url" as const, image_url: { url: image.dataUrl } }))],
-        },
-    ];
+    const content: VisionContentPart[] = [{ type: "text" as const, text: context.prompt }];
+    content.push(...images.map((image) => ({ type: "image_url" as const, image_url: { url: image.dataUrl } })));
+    for (const video of videos) {
+        content.push({
+            type: "text" as const,
+            text: i18n.t("canvas.projectPage.videoFramesIntro", { label: video.label, seconds: video.duration ? video.duration.toFixed(2) : i18n.t("canvas.projectPage.videoDurationUnknown"), count: video.frames.length }),
+        });
+        video.frames.forEach((frame, index) => {
+            content.push({ type: "text" as const, text: i18n.t("canvas.projectPage.videoFrameLabel", { index: index + 1, time: formatFrameTime(frame.time) }) });
+            content.push({ type: "image_url" as const, image_url: { url: frame.dataUrl } });
+        });
+    }
+    return [{ role: "user", content }];
+}
+
+function formatFrameTime(seconds: number) {
+    const total = Math.max(0, seconds);
+    const minutes = Math.floor(total / 60);
+    return `${String(minutes).padStart(2, "0")}:${(total - minutes * 60).toFixed(2).padStart(5, "0")}`;
 }
 
 export async function hydrateNodeGenerationContext(context: NodeGenerationContext) {

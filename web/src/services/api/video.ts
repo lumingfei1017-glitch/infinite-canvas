@@ -7,6 +7,8 @@ import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/medi
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
+import { muxOriginalAudio, requestBailianVideo, resolveBailianChannel, type BailianClipRange } from "./bailian";
+import { requestComfyVideo, resolveComfyModel, type ComfyWorkflowSummary } from "./comfyui";
 import { runModelPlugin } from "./model-plugin";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -71,6 +73,10 @@ function videoTaskFailed(message: string) {
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
     const selectedModel = (config.model || config.videoModel).trim();
+    const comfy = await resolveComfyModel(config, selectedModel);
+    if (comfy) return createComfyVideoTask(comfy.gatewayUrl, comfy.workflow, config, selectedModel, prompt, references, options);
+    const bailianChannel = resolveBailianChannel(config, selectedModel);
+    if (bailianChannel) return createBailianVideoTask(bailianChannel, config, selectedModel, prompt, references, options);
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const script = resolveModelScript(config, selectedModel);
     if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
@@ -120,6 +126,73 @@ async function createPluginVideoTask(config: AiConfig, model: string, script: st
     const id = nanoid();
     pluginVideoResults.set(id, result);
     return { id, provider: "plugin", model };
+}
+
+async function createComfyVideoTask(gatewayUrl: string, workflow: ComfyWorkflowSummary, config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
+    const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
+    // LTX-style workflows size their latent from the canvas ratio; seconds are driven by the audio inside the workflow.
+    const size = normalizeVideoSize(config.size, config.vquality) || "1024x1024";
+    const [width, height] = size.split("x");
+    const blob = await requestComfyVideo(gatewayUrl, workflow, prompt, references, videos, audios, { width: Number(width), height: Number(height) }, options);
+    const id = nanoid();
+    pluginVideoResults.set(id, { blob, mimeType: blob.type || "video/mp4" });
+    return { id, provider: "plugin", model };
+}
+
+async function createBailianVideoTask(channel: { gatewayUrl: string; model: string }, config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    const images = await Promise.all(references.map(async (image) => ({ dataUrl: await imageToDataUrl(image) })));
+    const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
+    const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
+    const clip = readBailianClip(config);
+    const blob = await requestBailianVideo(
+        channel.gatewayUrl,
+        channel.model,
+        prompt,
+        resolveVideoMode(config.videoMode, images.length),
+        {
+            images,
+            videos,
+            audios,
+            videoSeconds: clip ? [clip.end - clip.start] : (options?.videos || []).map((video) => (video.durationMs || 0) / 1000),
+            audioSeconds: (options?.audios || []).map((audio) => (audio.durationMs || 0) / 1000),
+            clip,
+        },
+        {
+            resolution: bailianResolution(config.vquality),
+            ratio: bailianRatio(inferVideoRatio(config.size || "16:9")),
+            duration: Number(normalizeVideoSeconds(config.videoSeconds)),
+            audio: boolConfig(config.videoGenerateAudio, true),
+            watermark: boolConfig(config.videoWatermark, false),
+        },
+        options,
+    );
+    // 视频复刻选「回贴原声」时，模型输出是无声的，这里把原片段音轨混回复刻结果。
+    const finalBlob = clip && config.videoSourceAudio === "true" && videos.length ? await muxOriginalAudio(channel.gatewayUrl, blob, videos[0], clip) : blob;
+    const id = nanoid();
+    pluginVideoResults.set(id, { blob: finalBlob, mimeType: finalBlob.type || "video/mp4" });
+    return { id, provider: "plugin", model };
+}
+
+/** 复刻片段区间由视频复刻向导写进节点元数据，普通生成不带这两个字段。 */
+function readBailianClip(config: AiConfig): BailianClipRange | undefined {
+    const start = Number(config.videoClipStart);
+    const end = Number(config.videoClipEnd);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end - start < 1) return undefined;
+    return { start, end };
+}
+
+/** wan3.0 only accepts 480P / 720P / 1080P tiers. */
+function bailianResolution(value: string) {
+    const pixels = Number(normalizeVideoResolution(value).replace(/p$/i, ""));
+    if (pixels >= 1080) return "1080P";
+    if (pixels <= 480) return "480P";
+    return "720P";
+}
+
+/** Ratios outside the wan3.0 list (and canvas "auto") fall back to adaptive, which follows the reference media. */
+function bailianRatio(ratio: string) {
+    return ["1:1", "3:4", "4:3", "16:9", "9:16", "21:9"].includes(ratio) ? ratio : "adaptive";
 }
 
 function videoPluginResult(result: unknown): VideoGenerationResult {

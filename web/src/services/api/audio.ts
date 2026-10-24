@@ -4,7 +4,9 @@ import i18n from "@/i18n";
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
+import { referenceMediaFile, requestComfyAudio, resolveComfyModel } from "./comfyui";
 import { runModelPlugin } from "./model-plugin";
+import type { ReferenceAudio } from "@/types/media";
 
 type RequestOptions = { signal?: AbortSignal };
 const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);
@@ -20,10 +22,16 @@ function aiHeaders(config: AiConfig) {
     };
 }
 
-export async function requestAudioGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<Blob> {
+export async function requestAudioGeneration(config: AiConfig, prompt: string, options?: RequestOptions, referenceAudios: ReferenceAudio[] = []): Promise<Blob> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.audioModel);
     const model = requestConfig.model.trim();
     const format = normalizeAudioFormatValue(config.audioFormat);
+    const comfy = await resolveComfyModel(config, config.model || config.audioModel);
+    if (comfy) {
+        // TTS clone workflows drive from a canvas-connected sample audio; the text goes in via the prompt binding.
+        const files = await Promise.all(referenceAudios.map((audio) => referenceMediaFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
+        return requestComfyAudio(comfy.gatewayUrl, comfy.workflow, prompt, files, options);
+    }
     const script = resolveModelScript(config, config.model || config.audioModel);
     if (script) {
         if (!model) throw new Error(apiText("audioModelRequired"));

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { BailianServerManager } from "./bailian-server-manager";
+import { ComfyWorkflowManager } from "./comfy-workflow-manager";
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
 
@@ -17,6 +19,8 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
     const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
         { label: "OpenAI", value: "openai" },
         { label: "Gemini", value: "gemini" },
+        { label: "ComfyUI", value: "comfyui" },
+        { label: "阿里云百炼", value: "bailian" },
     ];
     const capabilityOptions: Array<{ label: string; value: ModelCapability }> = ["image", "video", "text", "audio"].map((value) => ({ label: t(`config.channelEditor.capabilities.${value}`), value: value as ModelCapability }));
 
@@ -25,6 +29,9 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
     }, [open, channel]);
 
     if (!draft) return null;
+
+    // Gateway-backed formats keep the real server address and key inside the Python gateway, not in the browser.
+    const isGatewayFormat = draft.apiFormat === "comfyui" || draft.apiFormat === "bailian";
 
     const patch = (value: Partial<ModelChannel>) => setDraft((current) => (current ? { ...current, ...value } : current));
     const setModels = (models: ChannelModel[]) => patch({ models });
@@ -74,15 +81,28 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                     <Select className="w-full" value={draft.apiFormat} options={apiFormatOptions} onChange={changeApiFormat} />
                 </label>
                 <label className="block md:col-span-2">
-                    <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.baseUrl")}</span>
-                    <Input value={draft.baseUrl} onChange={(event) => patch({ baseUrl: event.target.value })} placeholder="https://api.example.com" />
+                    <span className="mb-1 block text-sm font-medium">{t(isGatewayFormat ? "config.channelEditor.gatewayUrl" : "config.channelEditor.baseUrl")}</span>
+                    <Input value={draft.baseUrl} onChange={(event) => patch({ baseUrl: event.target.value })} placeholder={isGatewayFormat ? "http://127.0.0.1:8787" : "https://api.example.com"} />
                 </label>
-                <label className="block md:col-span-2">
-                    <span className="mb-1 block text-sm font-medium">API Key</span>
-                    <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder="sk-..." />
-                </label>
+                {!isGatewayFormat && (
+                    <label className="block md:col-span-2">
+                        <span className="mb-1 block text-sm font-medium">API Key</span>
+                        <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder="sk-..." />
+                    </label>
+                )}
             </div>
 
+            {draft.apiFormat === "comfyui" ? (
+                <div className="mt-6">
+                    <ComfyWorkflowManager gatewayUrl={draft.baseUrl} onChanged={setModels} />
+                </div>
+            ) : (
+                <>
+            {draft.apiFormat === "bailian" && (
+                <div className="mt-6">
+                    <BailianServerManager gatewayUrl={draft.baseUrl} />
+                </div>
+            )}
             <div className="mt-6 mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div>
                     <div className="text-sm font-semibold">{t("config.channelEditor.models")}</div>
@@ -124,6 +144,8 @@ export function ChannelEditorDrawer({ open, channel, onSave, onClose }: { open: 
                 onSave={(script) => scriptTarget && setScript(scriptTarget.name, script)}
                 onClose={() => setScriptTarget(null)}
             />
+                </>
+            )}
         </Drawer>
     );
 }
