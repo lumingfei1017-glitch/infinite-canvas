@@ -42,8 +42,6 @@
 
 完整功能说明见 [功能介绍](docs/content/docs/overview/features.mdx)。
 
-如果你在为担心没有合适的生图API来发愁，可以查看该免费生图项目：[chatgpt2api](https://github.com/basketikun/chatgpt2api)
-
 ## 快速开始
 
 AI API Key、Base URL、画布、素材和生成记录默认保存在浏览器本地。
@@ -57,20 +55,6 @@ cd web
 bun install
 bun run dev
 ```
-
-### Docker 运行
-
-```bash
-git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas
-docker compose up -d
-```
-
-运行后默认端口3000，可访问 `http://localhost:3000`。
-
-首次打开后进入右上角配置，填入自己的 OpenAI 兼容 `Base URL` 和 `API Key`。
-
-如果默认的OpenAI接口调用方式与您的API不同，可自定义生图/视频脚本调用。
 
 ## 效果展示
 
@@ -92,24 +76,6 @@ docker compose up -d
     <td width="50%"><img src="https://i.ibb.co/XrnfXHx7/image.png" alt="image" border="0"></td>
   </tr>
 </table>
-
-## 联系方式
-
-项目定制二次开发需求 / 生图 API 需求可联系。
-
-邮箱：1844025705@qq.com · QQ：1844025705
-
-## 赞助支持
-
-本项目长期开放广告赞助合作，欢迎品牌 / 产品投放，你的支持是持续更新的动力！
-
-有广告赞助意向请通过上方联系方式沟通。
-
-## 社区支持
-
-学 AI，上 L 站：[LinuxDO](https://linux.do/)
-
-点击链接加入群聊【开源无限画布(2群)】：https://qm.qq.com/q/HRt2kUnYiG
 
 ## 开源协议
 
